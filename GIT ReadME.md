@@ -32,15 +32,7 @@
 
 ---
 
-## 3. Git Workflow Diagram
-
-Below is a typical Git workflow diagram showing the process from making changes to pushing them to a remote repository:
-
-![Git Workflow Diagram](https://miro.medium.com/v2/resize:fit:1100/format:webp/1*3JboxmAJwyCWGPVAK2NqQw.gif)
-
----
-
-## 4. Git Installation 
+## 3. Git Installation 
 
 * **Windows:** Download from [https://git-scm.com](https://git-scm.com)
 * **Linux:**
@@ -62,7 +54,7 @@ git --version
 
 ---
 
-## 5. Git Configuration
+## 4. Git Configuration
 
 Set username and email:
 
@@ -94,6 +86,14 @@ List all Git configurations:
 ```bash
 git config --list
 ```
+
+---
+
+## 5. Git Workflow Diagram
+
+Below is a typical Git workflow diagram showing the process from making changes to pushing them to a remote repository:
+
+![Git Workflow Diagram](https://infopalette.com/wp-content/uploads/2024/02/Git-WorkFlow-1-891x1024.gif)
 
 ---
 
