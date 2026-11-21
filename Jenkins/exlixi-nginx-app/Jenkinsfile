@@ -1,0 +1,77 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'DEPLOY_HOST', defaultValue: 'CHANGE_ME_APP_VM_PUBLIC_IP', description: 'Public or private IP/DNS of the AWS application server')
+        string(name: 'DEPLOY_USER', defaultValue: 'ubuntu', description: 'SSH user on the AWS application server')
+    }
+
+    environment {
+        APP_NAME = 'exlixi'
+        APP_SOURCE = 'Jenkins/exlixi-nginx-app'
+        REMOTE_STAGING = '/tmp/exlixi-web'
+        REMOTE_WEB_ROOT = '/var/www/exlixi'
+        SSH_CREDENTIAL_ID = 'aws-app-server-ssh-key'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    stages {
+        stage('Validate Source') {
+            steps {
+                sh '''
+                    test -f "${APP_SOURCE}/index.html"
+                    test -f "${APP_SOURCE}/styles.css"
+                    test -f "${APP_SOURCE}/nginx.conf"
+                    echo "Exelixi frontend source is present"
+                '''
+            }
+        }
+
+        stage('Deploy to AWS VM') {
+            steps {
+                sshagent(credentials: [env.SSH_CREDENTIAL_ID]) {
+                    sh '''
+                        set -e
+
+                        ssh -o StrictHostKeyChecking=accept-new \
+                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                            "sudo mkdir -p ${REMOTE_STAGING} ${REMOTE_WEB_ROOT}"
+
+                        rsync -avz --delete \
+                            --exclude '.git/' \
+                            --exclude 'Jenkinsfile' \
+                            "${APP_SOURCE}/" \
+                            "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_STAGING}/"
+
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rsync -av --delete ${REMOTE_STAGING}/ ${REMOTE_WEB_ROOT}/"
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rsync -av ${REMOTE_STAGING}/nginx.conf /etc/nginx/sites-available/exlixi"
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo ln -sfn /etc/nginx/sites-available/exlixi /etc/nginx/sites-enabled/exlixi"
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rm -f /etc/nginx/sites-enabled/default"
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo nginx -t && sudo systemctl reload nginx"
+                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "curl --fail --silent --show-error http://127.0.0.1/ >/dev/null"
+                    '''
+                }
+            }
+        }
+
+        stage('Deployment Summary') {
+            steps {
+                sh 'echo "Exelixi was deployed successfully to http://${DEPLOY_HOST}"'
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Exelixi frontend deployment completed successfully.'
+        }
+        failure {
+            echo 'Exelixi frontend deployment failed. Review the Jenkins console output.'
+        }
+    }
+}
