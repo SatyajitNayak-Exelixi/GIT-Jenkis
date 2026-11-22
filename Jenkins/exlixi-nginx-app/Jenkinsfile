@@ -2,16 +2,16 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'DEPLOY_HOST', defaultValue: 'CHANGE_ME_APP_VM_PUBLIC_IP', description: 'Public or private IP/DNS of the AWS application server')
-        string(name: 'DEPLOY_USER', defaultValue: 'ubuntu', description: 'SSH user on the AWS application server')
+        choice(name: 'DEPLOY_APPLICATION', choices: ['Yes', 'No'], description: 'Are you okay to deploy the Exelixi application?')
+        string(name: 'CHANGE_REQUEST_NUMBER', defaultValue: '', description: 'Enter the approved Change Request number')
     }
 
     environment {
-        APP_NAME = 'exlixi'
+        GIT_URL = 'https://github.com/SatyajitNayak-Exelixi/GIT-Jenkis.git'
+        GIT_BRANCH = 'main'
         APP_SOURCE = 'Jenkins/exlixi-nginx-app'
-        REMOTE_STAGING = '/tmp/exlixi-web'
-        REMOTE_WEB_ROOT = '/var/www/exlixi'
-        SSH_CREDENTIAL_ID = 'aws-app-server-ssh-key'
+        WEB_ROOT = '/var/www/exlixi'
+        NGINX_SITE = '/etc/nginx/sites-available/exlixi'
     }
 
     options {
@@ -21,57 +21,79 @@ pipeline {
     }
 
     stages {
+        stage('Checkout Code') {
+            steps {
+                git branch: env.GIT_BRANCH, url: env.GIT_URL
+            }
+        }
+
         stage('Validate Source') {
             steps {
                 sh '''
+                    set -e
                     test -f "${APP_SOURCE}/index.html"
                     test -f "${APP_SOURCE}/styles.css"
+                    test -f "${APP_SOURCE}/script.js"
                     test -f "${APP_SOURCE}/nginx.conf"
-                    echo "Exelixi frontend source is present"
+                    echo "Exelixi source files found"
                 '''
             }
         }
 
-        stage('Deploy to AWS VM') {
+        stage('Deployment Approval') {
             steps {
-                sshagent(credentials: [env.SSH_CREDENTIAL_ID]) {
-                    sh '''
-                        set -e
-
-                        ssh -o StrictHostKeyChecking=accept-new \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                            "sudo mkdir -p ${REMOTE_STAGING} ${REMOTE_WEB_ROOT}"
-
-                        rsync -avz --delete \
-                            --exclude '.git/' \
-                            --exclude 'Jenkinsfile' \
-                            "${APP_SOURCE}/" \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}:${REMOTE_STAGING}/"
-
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rsync -av --delete ${REMOTE_STAGING}/ ${REMOTE_WEB_ROOT}/"
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rsync -av ${REMOTE_STAGING}/nginx.conf /etc/nginx/sites-available/exlixi"
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo ln -sfn /etc/nginx/sites-available/exlixi /etc/nginx/sites-enabled/exlixi"
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo rm -f /etc/nginx/sites-enabled/default"
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "sudo nginx -t && sudo systemctl reload nginx"
-                        ssh "${DEPLOY_USER}@${DEPLOY_HOST}" "curl --fail --silent --show-error http://127.0.0.1/ >/dev/null"
-                    '''
+                script {
+                    if (!params.CHANGE_REQUEST_NUMBER?.trim()) {
+                        error 'A Change Request number is required before deployment.'
+                    }
+                    if (params.DEPLOY_APPLICATION != 'Yes') {
+                        error 'Deployment cancelled. The approval parameter was set to No.'
+                    }
+                    echo "Deployment approved for Change Request ${params.CHANGE_REQUEST_NUMBER}"
                 }
             }
         }
 
-        stage('Deployment Summary') {
+        stage('Deploy to Nginx') {
             steps {
-                sh 'echo "Exelixi was deployed successfully to http://${DEPLOY_HOST}"'
+                sh '''
+                    set -e
+
+                    sudo mkdir -p "${WEB_ROOT}"
+                    sudo rsync -av --delete \
+                        --exclude '.git/' \
+                        --exclude 'Jenkinsfile' \
+                        "${APP_SOURCE}/" "${WEB_ROOT}/"
+
+                    sudo rsync -av "${APP_SOURCE}/nginx.conf" "${NGINX_SITE}"
+                    sudo ln -sfn "${NGINX_SITE}" /etc/nginx/sites-enabled/exlixi
+                    sudo rm -f /etc/nginx/sites-enabled/default
+
+                    sudo nginx -t
+                    sudo systemctl enable nginx
+                    sudo systemctl start nginx
+                    sudo systemctl reload nginx
+                '''
+            }
+        }
+
+        stage('Verify Application') {
+            steps {
+                sh '''
+                    set -e
+                    curl --fail --silent --show-error http://127.0.0.1/ | grep -i "Exelixi"
+                    echo "Exelixi application is responding on port 80"
+                '''
             }
         }
     }
 
     post {
         success {
-            echo 'Exelixi frontend deployment completed successfully.'
+            echo 'Exelixi frontend deployed successfully.'
         }
         failure {
-            echo 'Exelixi frontend deployment failed. Review the Jenkins console output.'
+            echo 'Deployment failed. Review the Jenkins console output.'
         }
     }
 }
